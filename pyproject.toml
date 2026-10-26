@@ -1,0 +1,27 @@
+[project]
+name = "provider-service"
+version = "0.1.0"
+description = "HTTP control plane for InferX, Modal, Runpod, and Beam."
+requires-python = ">=3.9"
+license = "AGPL-3.0-only"
+dependencies = [
+  "fastapi",
+  "uvicorn",
+  "httpx",
+  "modal>=1.6.1",
+  "beam-client>=0.2.222",
+  "beta9>=0.1.285,<0.2",
+]
+
+[project.scripts]
+provider-service = "provider_service.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

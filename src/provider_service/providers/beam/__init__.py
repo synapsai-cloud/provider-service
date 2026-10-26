@@ -1,0 +1,1 @@
+"""Beam GPU inference provider."""
