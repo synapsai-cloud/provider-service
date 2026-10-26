@@ -26,6 +26,11 @@ from provider_service.settings import InferenceBackendError
 
 app = FastAPI(title="Provider service")
 
+# GNU AGPL section 13: anyone interacting with this process over the network
+# must be able to obtain the corresponding source. A modified deployment sets
+# PROVIDER_SERVICE_SOURCE_URL to the network location of that modified source.
+DEFAULT_SOURCE_URL = "https://github.com/synapsai-cloud/provider-service"
+
 _ADAPTERS: dict[str, Any] = {}
 _BACKENDS = ("inferx", "modal", "runpod", "beam")
 _OPS = {
@@ -180,9 +185,14 @@ def _authorized(authorization: str | None) -> bool:
     return presented == expected
 
 
+def source_url() -> str:
+    configured = (os.getenv("PROVIDER_SERVICE_SOURCE_URL") or "").strip()
+    return configured or DEFAULT_SOURCE_URL
+
+
 @app.get("/health")
-def health() -> dict[str, bool]:
-    return {"ok": True}
+def health() -> dict[str, Any]:
+    return {"ok": True, "license": "AGPL-3.0-only", "source": source_url()}
 
 
 @app.post("/v1")

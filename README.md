@@ -22,3 +22,11 @@ python -m provider_service
 The listen address is `PROVIDER_SERVICE_HOST` and `PROVIDER_SERVICE_PORT` (default `127.0.0.1:8091`). Every `/v1` call must send `Authorization: Bearer <PROVIDER_SERVICE_TOKEN>`. `GET /health` does not.
 
 Callers authenticate with the same `PROVIDER_SERVICE_TOKEN`. Provider credentials stay in this service's `.env`.
+
+## Source
+
+This service is [AGPL-3.0-only](LICENSE). `GET /health` returns a `source` URL so anyone reaching the process over the network can obtain the corresponding source (GNU AGPL section 13).
+
+https://github.com/synapsai-cloud/provider-service
+
+A modified deployment sets `PROVIDER_SERVICE_SOURCE_URL` to the network location of that modified source. `/health` then offers that URL instead.
