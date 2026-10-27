@@ -20,7 +20,7 @@ from provider_service.providers.modal.gpus import MODAL_GPUS
 from provider_service.providers.runpod.gpus import RUNPOD_GPU_POOLS
 
 INFERENCE_BACKENDS = ("inferx", "modal", "runpod", "beam")
-DEFAULT_INFERENCE_BACKEND = "inferx"
+DEFAULT_INFERENCE_BACKEND = "beam"
 _V3_BACKENDS = frozenset({"modal", "runpod", "beam"})
 _BACKEND_LABELS = {
     "inferx": "InferX",
@@ -45,17 +45,11 @@ def _first_nonempty(*values: str | None) -> str:
     return ""
 
 
-def _from_secret(key: str) -> str:
-    del key
-    return ""
-
-
 def resolve_inference_backend(name: str | None = None) -> str:
     """Return ``inferx``, ``modal``, ``runpod``, or ``beam``. Unknown values raise."""
     resolved = _first_nonempty(
         name,
         os.getenv("INFERENCE_BACKEND"),
-        _from_secret("INFERENCE_BACKEND"),
         DEFAULT_INFERENCE_BACKEND,
     ).lower()
     if resolved not in INFERENCE_BACKENDS:
@@ -91,7 +85,7 @@ def parse_backend_routes(raw: str | None = None) -> list[BackendRoute]:
     still unmatched.
     """
     if raw is None:
-        raw = _first_nonempty(os.getenv("GPU_BACKEND_ROUTES"), _from_secret("GPU_BACKEND_ROUTES"))
+        raw = _first_nonempty(os.getenv("GPU_BACKEND_ROUTES"))
     text = str(raw or "").strip()
     if text == "":
         return []
@@ -224,7 +218,7 @@ def modal_gpu(vram_mb: int, gpu_count: int = 1) -> str:
     count = int(gpu_count or 1)
     if count <= 0:
         raise InferenceBackendError("gpu_count must be a positive integer")
-    override = _first_nonempty(os.getenv("MODAL_GPU"), _from_secret("MODAL_GPU"))
+    override = _first_nonempty(os.getenv("MODAL_GPU"))
     if override != "":
         if count > 1 and ":" not in override:
             return f"{override}:{count}"
@@ -241,43 +235,29 @@ def modal_proxy_bearer() -> str:
     These are workspace proxy tokens, not the Modal SDK token pair.
     https://modal.com/docs/guide/webhook-proxy-auth
     """
-    token_id = _first_nonempty(
-        os.getenv("MODAL_PROXY_TOKEN_ID"),
-        _from_secret("MODAL_PROXY_TOKEN_ID"),
-    )
-    token_secret = _first_nonempty(
-        os.getenv("MODAL_PROXY_TOKEN_SECRET"),
-        _from_secret("MODAL_PROXY_TOKEN_SECRET"),
-    )
+    token_id = _first_nonempty(os.getenv("MODAL_PROXY_TOKEN_ID"))
+    token_secret = _first_nonempty(os.getenv("MODAL_PROXY_TOKEN_SECRET"))
     if token_id == "" or token_secret == "":
         return ""
     return f"{token_id}.{token_secret}"
 
 
 def modal_server_unauthenticated() -> bool:
-    raw = _first_nonempty(
-        os.getenv("MODAL_SERVER_UNAUTHENTICATED"),
-        _from_secret("MODAL_SERVER_UNAUTHENTICATED"),
-        "0",
-    )
+    raw = _first_nonempty(os.getenv("MODAL_SERVER_UNAUTHENTICATED"), "0")
     return raw == "1"
 
 
 def modal_environment_name() -> str | None:
-    name = _first_nonempty(os.getenv("MODAL_ENVIRONMENT"), _from_secret("MODAL_ENVIRONMENT"))
+    name = _first_nonempty(os.getenv("MODAL_ENVIRONMENT"))
     return name or None
 
 
 def runpod_api_key() -> str:
-    return _first_nonempty(os.getenv("RUNPOD_API_KEY"), _from_secret("RUNPOD_API_KEY"))
+    return _first_nonempty(os.getenv("RUNPOD_API_KEY"))
 
 
 def runpod_api_base() -> str:
-    return _first_nonempty(
-        os.getenv("RUNPOD_API_BASE"),
-        _from_secret("RUNPOD_API_BASE"),
-        "https://api.runpod.io",
-    ).rstrip("/")
+    return _first_nonempty(os.getenv("RUNPOD_API_BASE"), "https://api.runpod.io").rstrip("/")
 
 
 def runpod_gpu_pool(vram_mb: int, gpu_count: int = 1) -> tuple[str, int]:
@@ -285,7 +265,7 @@ def runpod_gpu_pool(vram_mb: int, gpu_count: int = 1) -> tuple[str, int]:
     count = int(gpu_count or 1)
     if count <= 0:
         raise InferenceBackendError("gpu_count must be a positive integer")
-    override = _first_nonempty(os.getenv("RUNPOD_GPU_POOL"), _from_secret("RUNPOD_GPU_POOL"))
+    override = _first_nonempty(os.getenv("RUNPOD_GPU_POOL"))
     if override != "":
         return override, count
     return gpu_card("runpod", vram_mb).name, count
@@ -389,24 +369,16 @@ def plan_gpus(total_vram_mb: int, backend: str, *, warm: bool = False) -> GpuPla
 
 
 def beam_api_token() -> str:
-    return _first_nonempty(os.getenv("BEAM_TOKEN"), _from_secret("BEAM_TOKEN"))
+    return _first_nonempty(os.getenv("BEAM_TOKEN"))
 
 
 def beam_server_unauthenticated() -> bool:
-    raw = _first_nonempty(
-        os.getenv("BEAM_SERVER_UNAUTHENTICATED"),
-        _from_secret("BEAM_SERVER_UNAUTHENTICATED"),
-        "0",
-    )
+    raw = _first_nonempty(os.getenv("BEAM_SERVER_UNAUTHENTICATED"), "0")
     return raw == "1"
 
 
 def beam_checkpoint_enabled() -> bool:
-    raw = _first_nonempty(
-        os.getenv("BEAM_CHECKPOINT_ENABLED"),
-        _from_secret("BEAM_CHECKPOINT_ENABLED"),
-        "1",
-    )
+    raw = _first_nonempty(os.getenv("BEAM_CHECKPOINT_ENABLED"), "1")
     return raw == "1"
 
 
@@ -416,11 +388,7 @@ def beam_ondemand_only() -> bool:
     ``min_instances`` 0 still reserves ``max_instances`` machines. Nothing
     is placed on a serverless Pod.
     """
-    raw = _first_nonempty(
-        os.getenv("BEAM_ONDEMAND_ONLY"),
-        _from_secret("BEAM_ONDEMAND_ONLY"),
-        "0",
-    )
+    raw = _first_nonempty(os.getenv("BEAM_ONDEMAND_ONLY"), "0")
     return raw == "1"
 
 
@@ -433,7 +401,7 @@ def beam_gpu(vram_mb: int, gpu_count: int = 1) -> str:
     count = int(gpu_count or 1)
     if count <= 0:
         raise InferenceBackendError("gpu_count must be a positive integer")
-    override = _first_nonempty(os.getenv("BEAM_GPU"), _from_secret("BEAM_GPU"))
+    override = _first_nonempty(os.getenv("BEAM_GPU"))
     if override != "":
         return override
     needed = int(vram_mb or 0)
@@ -457,14 +425,14 @@ def beam_ondemand_gpu(vram_mb: int, gpu_count: int = 1) -> str:
     count = int(gpu_count or 1)
     if count <= 0:
         raise InferenceBackendError("gpu_count must be a positive integer")
-    override = _first_nonempty(os.getenv("BEAM_ONDEMAND_GPU"), _from_secret("BEAM_ONDEMAND_GPU"))
+    override = _first_nonempty(os.getenv("BEAM_ONDEMAND_GPU"))
     if override != "":
         return override
     return gpu_card("beam", vram_mb, warm=True).name
 
 
 def beam_pod_cpu() -> float:
-    raw = _first_nonempty(os.getenv("BEAM_POD_CPU"), _from_secret("BEAM_POD_CPU"), "4")
+    raw = _first_nonempty(os.getenv("BEAM_POD_CPU"), "4")
     try:
         return float(raw)
     except ValueError as exc:
@@ -484,7 +452,7 @@ def beam_pod_ram_gib(vram_mb: int, gpu_count: int = 1) -> int:
 
 def beam_pod_memory(vram_mb: int, gpu_count: int = 1) -> str:
     """Host RAM for a Beam pod. ``BEAM_POD_MEMORY`` overrides the 16 GiB minimum."""
-    override = _first_nonempty(os.getenv("BEAM_POD_MEMORY"), _from_secret("BEAM_POD_MEMORY"))
+    override = _first_nonempty(os.getenv("BEAM_POD_MEMORY"))
     if override != "":
         return override
     return f"{beam_pod_ram_gib(vram_mb, gpu_count)}Gi"
@@ -525,10 +493,7 @@ def beam_target_concurrency(
         return _positive_limit(request_limit, "request_limit")
     from provider_service.limits import DEFAULT_REQUEST_LIMIT
 
-    raw = _first_nonempty(
-        os.getenv("BEAM_TARGET_CONCURRENCY"),
-        _from_secret("BEAM_TARGET_CONCURRENCY"),
-    )
+    raw = _first_nonempty(os.getenv("BEAM_TARGET_CONCURRENCY"))
     if raw == "":
         return DEFAULT_REQUEST_LIMIT
     return _positive_limit(raw, "BEAM_TARGET_CONCURRENCY")
@@ -549,10 +514,7 @@ def runpod_target_concurrency(
         return _positive_limit(request_limit, "request_limit")
     from provider_service.limits import DEFAULT_REQUEST_LIMIT
 
-    raw = _first_nonempty(
-        os.getenv("RUNPOD_TARGET_CONCURRENCY"),
-        _from_secret("RUNPOD_TARGET_CONCURRENCY"),
-    )
+    raw = _first_nonempty(os.getenv("RUNPOD_TARGET_CONCURRENCY"))
     if raw == "":
         return DEFAULT_REQUEST_LIMIT
     return _positive_limit(raw, "RUNPOD_TARGET_CONCURRENCY")
@@ -573,12 +535,6 @@ def provider_from_url(url: str | None) -> str:
 
 
 def registry_credentials() -> tuple[str, str]:
-    username = _first_nonempty(
-        os.getenv("GHCR_INFERENCE_IMAGE_USERNAME"),
-        _from_secret("GHCR_INFERENCE_IMAGE_USERNAME"),
-    )
-    password = _first_nonempty(
-        os.getenv("GHCR_INFERENCE_IMAGE_READ_TOKEN"),
-        _from_secret("GHCR_INFERENCE_IMAGE_READ_TOKEN"),
-    )
+    username = _first_nonempty(os.getenv("GHCR_INFERENCE_IMAGE_USERNAME"))
+    password = _first_nonempty(os.getenv("GHCR_INFERENCE_IMAGE_READ_TOKEN"))
     return username, password

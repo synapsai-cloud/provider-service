@@ -64,30 +64,24 @@ def _first_nonempty(*values: str | None) -> str:
     return ""
 
 
-def _from_secret(key: str) -> str:
-    del key
-    return ""
-
-
 def resolve_inferx_base_url(base_url: str | None = None) -> str:
     return _first_nonempty(
         base_url,
         os.getenv("INFERX_BASE_URL"),
-        _from_secret("INFERX_BASE_URL"),
         DEFAULT_BASE_URL,
     ).rstrip("/")
 
 
 def resolve_inferx_api_key(api_key: str | None = None) -> str:
-    return _first_nonempty(api_key, os.getenv("INFERX_API_KEY"), _from_secret("INFERX_API_KEY"))
+    return _first_nonempty(api_key, os.getenv("INFERX_API_KEY"))
 
 
 def resolve_inferx_session(session: str | None = None) -> str:
-    return _first_nonempty(session, os.getenv("INFERX_SESSION"), _from_secret("INFERX_SESSION"))
+    return _first_nonempty(session, os.getenv("INFERX_SESSION"))
 
 
 def resolve_inferx_tenant(tenant: str | None = None) -> str:
-    return _first_nonempty(tenant, os.getenv("INFERX_TENANT"), _from_secret("INFERX_TENANT"))
+    return _first_nonempty(tenant, os.getenv("INFERX_TENANT"))
 
 
 def normalize_commands(commands: str | list[str]) -> list[str]:
