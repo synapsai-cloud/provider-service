@@ -16,8 +16,12 @@ Callers send one JSON request:
 pip install -e .
 cp .env.example .env
 # set PROVIDER_SERVICE_TOKEN and the provider credentials you use
-python -m provider_service
+provider-service start
 ```
+
+`start` runs the service in the background. `provider-service stop` stops it, and `provider-service restart` stops it and starts it again. The process id is written to `.provider-service.pid` in the current directory, and output goes to `.provider-service.log`. Run the commands from this directory so they find `.env`.
+
+`provider-service run` and `python -m provider_service` run the service in the foreground.
 
 The listen address is `PROVIDER_SERVICE_HOST` and `PROVIDER_SERVICE_PORT` (default `127.0.0.1:8091`). Every `/v1` call must send `Authorization: Bearer <PROVIDER_SERVICE_TOKEN>`. `GET /health` does not.
 

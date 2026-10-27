@@ -1,4 +1,6 @@
 .env
+.provider-service.pid
+.provider-service.log
 .pytest_cache/
 __pycache__/
 *.egg-info/
