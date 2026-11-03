@@ -63,7 +63,28 @@ def test_burst_storage_reads_volume_bytes_for_the_burst_pod():
     assert burst_storage_gb(model_id, has_burst_deployment=True, volumes=volumes) == 5
 
 
-def test_runpod_endpoint_is_a_secure_cloud_load_balancer_with_active_workers():
+def test_runpod_keeps_us_data_centers_from_the_north_america_catalog():
+    from provider_service.providers.runpod.app import _us_data_center_ids_from_catalog
+
+    ids = _us_data_center_ids_from_catalog(
+        {
+            "dataCenters": [
+                {"id": "EU-RO-1", "region": "EUROPE"},
+                {"id": "US-TX-3", "region": "NORTH_AMERICA"},
+                {"id": "CA-MTL-1", "region": "NORTH_AMERICA"},
+                {"id": "US-KS-2", "region": "NORTH_AMERICA"},
+                {"id": "US-TX-3", "region": "NORTH_AMERICA"},
+            ]
+        }
+    )
+    assert ids == ["US-TX-3", "US-KS-2"]
+
+
+def test_runpod_endpoint_is_a_secure_cloud_load_balancer_with_active_workers(monkeypatch):
+    monkeypatch.setattr(
+        "provider_service.providers.runpod.app.us_data_center_ids",
+        lambda: ["US-TX-3", "US-KS-2"],
+    )
     body = _container_body(
         command=["python", "-m", "server"],
         image="docker.io/example/inference:latest",
@@ -75,6 +96,7 @@ def test_runpod_endpoint_is_a_secure_cloud_load_balancer_with_active_workers():
         scale_up_threshold=None,
         hf_token=None,
         request_concurrency=2,
+        health_path="/system/health",
     )
     assert body["type"] == "LOAD_BALANCER"
     assert body["image"] == "docker.io/example/inference:latest"
@@ -82,6 +104,8 @@ def test_runpod_endpoint_is_a_secure_cloud_load_balancer_with_active_workers():
     assert body["workers"]["min"] == 1
     assert body["workers"]["max"] == 3
     assert body["scaling"]["type"] == "REQUEST_COUNT"
+    assert body["dataCenterIds"] == ["US-TX-3", "US-KS-2"]
+    assert body["env"]["HEALTH_CHECK_PATH"] == "/system/health"
     assert "cloud" not in body
 
 

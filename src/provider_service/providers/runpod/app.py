@@ -13,6 +13,9 @@ Runpod docs used here:
 
 Serverless workers run in Runpod Secure Cloud data centers. The create body has
 no Community Cloud switch; pods are the resource that can select Community.
+``dataCenterIds`` lists the US data centers from the catalog, and Runpod places
+each worker in whichever of those has capacity. Omitting the field lets the
+scheduler use any region, including EU-RO-1.
 Each endpoint is a load balancer: HTTP goes straight to the worker, with a
 30 MB request and response limit. ``workers.min`` is at least 1, so that
 worker stays up and does not cold-start. Extra workers up to ``workers.max``
@@ -237,6 +240,32 @@ def _ensure_registry(image: str) -> str | None:
     return registry_id
 
 
+def _us_data_center_ids_from_catalog(payload: Any) -> list[str]:
+    centers = payload.get("dataCenters") if isinstance(payload, dict) else None
+    ids: list[str] = []
+    for center in centers or []:
+        if not isinstance(center, dict):
+            continue
+        dc_id = str(center.get("id") or "").strip()
+        if dc_id.startswith("US-") and dc_id not in ids:
+            ids.append(dc_id)
+    return ids
+
+
+def us_data_center_ids() -> list[str]:
+    """US data centers Runpod may place a worker in.
+
+    https://docs.runpod.io/api-reference-v2/catalog/list-data-centers
+    ``dataCenterIds`` constrains placement. The scheduler still picks the
+    center in this list that has capacity.
+    """
+    payload = _request("GET", "/v2/catalog/datacenters", params={"regions": "NORTH_AMERICA"}) or {}
+    ids = _us_data_center_ids_from_catalog(payload)
+    if not ids:
+        raise RunpodBackendError("Runpod returned no US data centers")
+    return ids
+
+
 def _container_body(
     *,
     command: list[str],
@@ -261,6 +290,8 @@ def _container_body(
         "PORT_HEALTH": str(listen),
         "CUDA_VISIBLE_DEVICES": cuda_visible_devices_value(gpu_count),
     }
+    # Unset, Runpod probes ``/ping``. A 404 makes it kill the worker, and the
+    # deployment manager's ``/model/ready`` request never arrives.
     if health_path:
         env["HEALTH_CHECK_PATH"] = health_path
     if hf_token:
@@ -282,6 +313,7 @@ def _container_body(
         },
         "scaling": _scaling_body(scale_up_threshold, request_concurrency),
         "timeout": _execution_timeout_ms(worker_timeout),
+        "dataCenterIds": us_data_center_ids(),
     }
     registry_id = _ensure_registry(image)
     if registry_id:

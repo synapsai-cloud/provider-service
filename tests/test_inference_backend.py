@@ -18,10 +18,16 @@ from provider_service.settings import (
 )
 
 
-def test_backend_defaults_to_inferx(monkeypatch):
+def test_backend_must_be_set(monkeypatch):
     monkeypatch.delenv("INFERENCE_BACKEND", raising=False)
-    assert resolve_inference_backend() == "inferx"
+    try:
+        resolve_inference_backend()
+        raise AssertionError("expected InferenceBackendError")
+    except InferenceBackendError as exc:
+        assert "must be set" in str(exc)
     assert resolve_inference_backend("modal") == "modal"
+    monkeypatch.setenv("INFERENCE_BACKEND", "beam")
+    assert resolve_inference_backend() == "beam"
 
 
 def test_backend_rejects_unknown_name():

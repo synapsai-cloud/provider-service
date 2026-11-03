@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 def build_inference_backend(name: str | None = None):
-    """Construct one adapter. ``name`` overrides ``INFERENCE_BACKEND``."""
+    """Construct one adapter. ``name`` is that provider."""
     from provider_service.settings import resolve_inference_backend
 
     resolved = resolve_inference_backend(name)
@@ -26,7 +26,7 @@ def build_inference_backend(name: str | None = None):
 
 
 def build_inference_backends() -> dict:
-    """Adapters for the fallback backend and every provider named in the routes."""
+    """Adapters for every provider named by ``INFERENCE_BACKEND``."""
     from provider_service.settings import backend_names_in_use
 
     return {name: build_inference_backend(name) for name in backend_names_in_use()}

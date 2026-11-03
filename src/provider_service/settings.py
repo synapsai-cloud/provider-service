@@ -1,10 +1,9 @@
 """Switch the inference control plane between InferX, Modal, Runpod, and Beam.
 
-``INFERENCE_BACKEND`` is the fallback (``inferx``, ``modal``, ``runpod``, or ``beam``).
-InferX is the default. ``GPU_BACKEND_ROUTES`` can place a model on a different
-provider from its scaling policy, for example warm models on Runpod and
-scale-to-zero models on Modal. Modal, Runpod, and Beam start the command and
-image the caller sends. InferX keeps its own function image.
+``INFERENCE_BACKEND`` must be set. It is one provider (``beam``) or a route list
+(``warm=runpod,burst=modal``). Callers that name a backend on the request do
+not use this value. Modal, Runpod, and Beam start the command and image the
+caller sends. InferX keeps its own function image.
 """
 
 from __future__ import annotations
@@ -20,7 +19,6 @@ from provider_service.providers.modal.gpus import MODAL_GPUS
 from provider_service.providers.runpod.gpus import RUNPOD_GPU_POOLS
 
 INFERENCE_BACKENDS = ("inferx", "modal", "runpod", "beam")
-DEFAULT_INFERENCE_BACKEND = "beam"
 _V3_BACKENDS = frozenset({"modal", "runpod", "beam"})
 _BACKEND_LABELS = {
     "inferx": "InferX",
@@ -45,24 +43,43 @@ def _first_nonempty(*values: str | None) -> str:
     return ""
 
 
+def inference_backend_setting() -> str:
+    """Return ``INFERENCE_BACKEND``. An empty value is an error."""
+    raw = _first_nonempty(os.getenv("INFERENCE_BACKEND"))
+    if raw.startswith("="):
+        raw = raw[1:].strip()
+    if raw == "":
+        raise InferenceBackendError(
+            "INFERENCE_BACKEND must be set to one provider "
+            "(inferx, modal, runpod, beam) or a route list "
+            "such as warm=runpod,burst=modal"
+        )
+    return raw
+
+
 def resolve_inference_backend(name: str | None = None) -> str:
-    """Return ``inferx``, ``modal``, ``runpod``, or ``beam``. Unknown values raise."""
-    resolved = _first_nonempty(
-        name,
-        os.getenv("INFERENCE_BACKEND"),
-        DEFAULT_INFERENCE_BACKEND,
-    ).lower()
+    """Return one known provider.
+
+    ``name`` is that provider. With no name, ``INFERENCE_BACKEND`` must itself
+    be a single provider. A route list is not a provider name.
+    """
+    if name is not None and str(name).strip() != "":
+        resolved = str(name).strip().lower()
+    else:
+        resolved = inference_backend_setting().lower()
     if resolved not in INFERENCE_BACKENDS:
         allowed = ", ".join(INFERENCE_BACKENDS)
         raise InferenceBackendError(
-            f"INFERENCE_BACKEND must be one of: {allowed} (got {resolved!r})"
+            "INFERENCE_BACKEND must name one provider "
+            f"({allowed}) or a route list such as warm=runpod,burst=modal "
+            f"(got {resolved!r})"
         )
     return resolved
 
 
 @dataclass(frozen=True)
 class BackendRoute:
-    """One scaling rule. ``op`` is ``=``, ``>=``, ``>``, ``<=``, ``<``, or ``default``."""
+    """One scaling rule. ``op`` is ``=``, ``>=``, ``>``, ``<=``, ``<``, ``warm``, or ``burst``."""
 
     op: str
     value: int
@@ -73,38 +90,46 @@ _ROUTE_RE = re.compile(
     r"^(?:min_workers|min_instances)\s*(>=|<=|>|<|=)\s*(\d+)\s*[=:]\s*([a-z0-9_-]+)$",
     re.IGNORECASE,
 )
-_DEFAULT_ROUTE_RE = re.compile(r"^default\s*[=:]\s*([a-z0-9_-]+)$", re.IGNORECASE)
+_ROLE_ROUTE_RE = re.compile(r"^(warm|burst)\s*[=:]\s*([a-z0-9_-]+)$", re.IGNORECASE)
 
 
 def parse_backend_routes(raw: str | None = None) -> list[BackendRoute]:
-    """Parse ``GPU_BACKEND_ROUTES``.
+    """Parse ``INFERENCE_BACKEND`` when it is a route list.
 
-    Rules are comma, semicolon, or newline separated and evaluated in order.
+    A single provider such as ``beam`` has no routes. Rules are comma,
+    semicolon, or newline separated and evaluated in order.
     ``min_workers>=1=runpod,min_workers=0=modal`` places warm models on Runpod
-    and scale-to-zero models on Modal. ``default=inferx`` matches anything
-    still unmatched.
+    and scale-to-zero models on Modal. ``warm=runpod,burst=modal`` keeps one
+    model's always-on replicas on Runpod and its scale-out replicas on Modal.
+    A scaling policy that matches no rule is an error.
     """
     if raw is None:
-        raw = _first_nonempty(os.getenv("GPU_BACKEND_ROUTES"))
-    text = str(raw or "").strip()
-    if text == "":
+        text = inference_backend_setting()
+    else:
+        text = str(raw or "").strip()
+        if text.startswith("="):
+            text = text[1:].strip()
+    if text == "" or text.lower() in INFERENCE_BACKENDS:
         return []
     routes: list[BackendRoute] = []
     for part in re.split(r"[,;\n]+", text):
         piece = part.strip()
         if piece == "":
             continue
-        default_match = _DEFAULT_ROUTE_RE.fullmatch(piece)
-        if default_match is not None:
-            backend = default_match.group(1).lower()
+        if piece.startswith("="):
+            piece = piece[1:].strip()
+        role_match = _ROLE_ROUTE_RE.fullmatch(piece)
+        if role_match is not None:
+            backend = role_match.group(2).lower()
             _require_backend_name(backend, piece)
-            routes.append(BackendRoute(op="default", value=0, backend=backend))
+            routes.append(BackendRoute(op=role_match.group(1).lower(), value=0, backend=backend))
             continue
         match = _ROUTE_RE.fullmatch(piece)
         if match is None:
             raise InferenceBackendError(
-                "GPU_BACKEND_ROUTES rules look like min_workers>=1=runpod or "
-                f"default=inferx (got {piece!r})"
+                "INFERENCE_BACKEND is one provider, or rules like "
+                "min_workers>=1=runpod,min_workers=0=modal or "
+                f"warm=runpod,burst=modal (got {piece!r})"
             )
         backend = match.group(3).lower()
         _require_backend_name(backend, piece)
@@ -116,13 +141,13 @@ def _require_backend_name(backend: str, piece: str) -> None:
     if backend not in INFERENCE_BACKENDS:
         allowed = ", ".join(INFERENCE_BACKENDS)
         raise InferenceBackendError(
-            f"GPU_BACKEND_ROUTES backend must be one of: {allowed} (got {piece!r})"
+            f"INFERENCE_BACKEND provider must be one of: {allowed} (got {piece!r})"
         )
 
 
 def _route_matches(route: BackendRoute, min_workers: int) -> bool:
-    if route.op == "default":
-        return True
+    if route.op in {"warm", "burst"}:
+        return False
     if route.op == "=":
         return min_workers == route.value
     if route.op == ">=":
@@ -137,41 +162,56 @@ def _route_matches(route: BackendRoute, min_workers: int) -> bool:
 
 
 def select_inference_backend(*, min_workers: int, routes: str | None = None) -> str:
-    """Pick a provider from scaling policy. No routes means ``INFERENCE_BACKEND``."""
+    """Pick a provider from ``INFERENCE_BACKEND``.
+
+    A single provider always wins. ``min_workers`` rules are evaluated in
+    order. ``warm`` and ``burst`` apply when those are the only rules.
+    A policy that matches nothing raises.
+    """
     workers = int(min_workers or 0)
-    for route in parse_backend_routes(routes):
+    parsed = parse_backend_routes(routes)
+    for route in parsed:
         if _route_matches(route, workers):
             return route.backend
-    return resolve_inference_backend()
+    if not parsed:
+        if routes is not None and str(routes).strip() != "":
+            return resolve_inference_backend(str(routes).strip())
+        return resolve_inference_backend()
+    warm = next((route.backend for route in parsed if route.op == "warm"), None)
+    burst = next((route.backend for route in parsed if route.op == "burst"), None)
+    if workers > 0 and warm:
+        return warm
+    if workers <= 0 and burst:
+        return burst
+    if warm or burst:
+        return warm or burst
+    raise InferenceBackendError("INFERENCE_BACKEND has no provider for this scaling policy")
 
 
 def backend_names_in_use() -> list[str]:
-    """Fallback backend plus every provider named by ``GPU_BACKEND_ROUTES``."""
+    """Providers named by ``INFERENCE_BACKEND``. Nothing else is added."""
+    routes = parse_backend_routes()
+    if not routes:
+        return [resolve_inference_backend()]
     names: list[str] = []
-    for name in (resolve_inference_backend(), *(route.backend for route in parse_backend_routes())):
-        if name not in names:
-            names.append(name)
+    for route in routes:
+        if route.backend not in names:
+            names.append(route.backend)
     return names
 
 
 def uses_inference_v3(backend: Any) -> bool:
     name = getattr(backend, "backend_name", None)
-    if name is None:
-        try:
-            name = resolve_inference_backend()
-        except InferenceBackendError:
-            name = DEFAULT_INFERENCE_BACKEND
+    if not name:
+        name = resolve_inference_backend()
     return name in _V3_BACKENDS
 
 
 def backend_label(backend: Any = None) -> str:
-    name = getattr(backend, "backend_name", None)
-    if name is None:
-        try:
-            name = resolve_inference_backend()
-        except InferenceBackendError:
-            name = DEFAULT_INFERENCE_BACKEND
-    return _BACKEND_LABELS.get(name, "InferX")
+    name = getattr(backend, "backend_name", None) if backend is not None else None
+    if not name:
+        name = resolve_inference_backend()
+    return _BACKEND_LABELS.get(name, name or "provider")
 
 
 def synapsai_app_name(model_id: str) -> str:
