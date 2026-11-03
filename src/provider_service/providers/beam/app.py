@@ -17,9 +17,12 @@ Beam docs used here:
 
 When checkpointing is enabled, Beam captures a memory snapshot after the
 caller's readiness path returns 200, then stops that container. A serverless pod
-does not start until the first request, so the checkpoint wait lives in
-deployment verification: after ``/model/ready`` succeeds and before the
-stress test. ``wait_for_checkpoint`` polls container logs for
+does not start until the first request. Creating the deployment only registers
+the image. Managed deployments make that request from deployment verification
+(``/model/ready``, while Beam itself polls ``/system/ready``). A custom image
+has no inference server of ours, so verification requests ``/system/ready`` on
+the guest gate, which answers 200 once the customer's process accepts
+connections. ``wait_for_checkpoint`` then polls container logs for
 ``Checkpoint created successfully``.
 
 Region: Beam runs hosted customer workloads in the United States unless a

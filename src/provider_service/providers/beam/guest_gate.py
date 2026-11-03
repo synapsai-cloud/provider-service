@@ -15,6 +15,10 @@ import inspect
 EDGE_HEADER = "X-Synaps-Edge"
 LISTEN_PORT = 8000
 APP_PORT = 8001
+# Beam snapshots the container on the first HTTP 200 from this path. The gate
+# answers it, without the edge header, once the customer's process accepts
+# connections. The customer's server should bind only after it has loaded.
+READY_PATH = "/system/ready"
 _DROPPED_ENV = (
     "BETA9_TOKEN",
     "BEAM_TOKEN",
@@ -93,6 +97,24 @@ def _serve() -> None:
     listen_port = int(os.environ.get("SYNAPS_LISTEN_PORT") or "8000")
     app_port = int(os.environ.get("SYNAPS_APP_PORT") or "8001")
     drop = {b"authorization", b"proxy-authorization", b"x-synaps-edge"}
+    ready_path = b"/system/ready"
+
+    def app_listening() -> bool:
+        try:
+            probe = socket.create_connection(("127.0.0.1", app_port), timeout=0.2)
+        except Exception:
+            return False
+        probe.close()
+        return True
+
+    def send_ready(client: socket.socket, status: int, reason: str, body: bytes) -> None:
+        head = (
+            f"HTTP/1.1 {status} {reason}\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\n"
+            "Connection: close\r\n\r\n"
+        )
+        client.sendall(head.encode() + body)
 
     def edge_ok(lines: list[bytes]) -> bool:
         if edge == "":
@@ -146,6 +168,14 @@ def _serve() -> None:
                     return
             head, rest = data.split(b"\r\n\r\n", 1)
             lines = head.split(b"\r\n")
+            start = lines[0].split(b" ") if lines else []
+            target = start[1] if len(start) >= 2 else b"/"
+            if target.split(b"?", 1)[0] == ready_path:
+                if app_listening():
+                    send_ready(client, 200, "OK", b'{"ready": true}')
+                else:
+                    send_ready(client, 503, "Service Unavailable", b'{"ready": false}')
+                return
             if len(lines) < 1 or not edge_ok(lines[1:]):
                 client.sendall(b"HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
                 return

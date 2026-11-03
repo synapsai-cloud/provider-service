@@ -251,6 +251,8 @@ class BeamAdapter:
     ) -> dict[str, Any]:
         del mode
         limit = beam_target_concurrency(request_limit=request_limit)
+        from provider_service.providers.beam.guest_gate import READY_PATH
+
         created = await asyncio.to_thread(
             beam_app.deploy_inference_pod,
             model_id=model_id,
@@ -264,6 +266,7 @@ class BeamAdapter:
             worker_timeout=worker_timeout,
             scale_up_threshold=scale_up_threshold,
             untrusted=True,
+            readiness_path=READY_PATH,
         )
         self._remember_capacity(model_id, created)
         return created
@@ -318,7 +321,9 @@ def _probe_ready(url: str, *, model_id: str = "", untrusted: bool = False) -> tu
 
     from provider_service.providers.beam.guest_gate import edge_headers
 
-    ready_url = build_url(url, "/model/ready")
+    from provider_service.providers.beam.guest_gate import READY_PATH
+
+    ready_url = build_url(url, READY_PATH if untrusted else "/model/ready")
     headers = {}
     token = beam_api_token()
     if token:
@@ -331,6 +336,8 @@ def _probe_ready(url: str, *, model_id: str = "", untrusted: bool = False) -> tu
         return "unhealthy", str(exc)
     if response.status_code != 200:
         return "unhealthy", f"HTTP {response.status_code}"
+    if untrusted:
+        return "healthy", ""
     try:
         body = response.json()
     except ValueError:

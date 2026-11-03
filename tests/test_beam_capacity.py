@@ -10,7 +10,7 @@ from provider_service.providers.beam.capacity import (
     volume_names_for_app,
     warm_app_name,
 )
-from provider_service.providers.runpod.app import endpoint_storage_gb
+from provider_service.providers.runpod.app import _container_body, endpoint_storage_gb
 from provider_service.settings import synapsai_app_name
 
 
@@ -61,6 +61,28 @@ def test_burst_storage_reads_volume_bytes_for_the_burst_pod():
     ]
     assert burst_storage_gb(model_id, has_burst_deployment=False, volumes=volumes) == 0
     assert burst_storage_gb(model_id, has_burst_deployment=True, volumes=volumes) == 5
+
+
+def test_runpod_endpoint_is_a_secure_cloud_load_balancer_with_active_workers():
+    body = _container_body(
+        command=["python", "-m", "server"],
+        image="docker.io/example/inference:latest",
+        gpu_count=4,
+        vram_mb=24 * 1024,
+        min_instances=0,
+        max_instances=3,
+        worker_timeout=None,
+        scale_up_threshold=None,
+        hf_token=None,
+        request_concurrency=2,
+    )
+    assert body["type"] == "LOAD_BALANCER"
+    assert body["image"] == "docker.io/example/inference:latest"
+    assert body["gpu"]["count"] == 4
+    assert body["workers"]["min"] == 1
+    assert body["workers"]["max"] == 3
+    assert body["scaling"]["type"] == "REQUEST_COUNT"
+    assert "cloud" not in body
 
 
 def test_runpod_storage_reads_the_endpoint_disk():

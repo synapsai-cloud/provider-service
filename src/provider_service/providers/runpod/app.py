@@ -1,4 +1,4 @@
-"""Deploy a caller-supplied image as a Runpod load-balancing endpoint.
+"""Deploy a caller-supplied image as a Runpod Secure Cloud serverless endpoint.
 
 Runpod docs used here:
 
@@ -9,8 +9,16 @@ Runpod docs used here:
 - Delete: https://docs.runpod.io/api-reference-v2/serverless/delete-a-serverless-endpoint
 - Load balancer: https://docs.runpod.io/serverless/load-balancing/overview
 - GPU pools: https://docs.runpod.io/references/gpu-types
+- Active workers: https://docs.runpod.io/serverless/endpoints/endpoint-configurations
 
-A load-balancing endpoint sends HTTP straight to the container port the caller names.
+Serverless workers run in Runpod Secure Cloud data centers. The create body has
+no Community Cloud switch; pods are the resource that can select Community.
+Each endpoint is a load balancer: HTTP goes straight to the worker, with a
+30 MB request and response limit. ``workers.min`` is at least 1, so that
+worker stays up and does not cold-start. Extra workers up to ``workers.max``
+are flex. ``gpu.count`` is the GPUs attached to each worker, including 4.
+The image is any Docker reference, and an existing load-balancing endpoint is
+updated in place.
 """
 
 from __future__ import annotations
@@ -177,7 +185,12 @@ def _endpoint_url(endpoint: dict[str, Any]) -> str:
 
 
 def _worker_bounds(min_instances: int, max_instances: int) -> tuple[int, int]:
-    minimum = max(0, int(min_instances))
+    """Active worker count and the flex ceiling.
+
+    ``workers.min`` is the always-on set. A floor of 1 keeps a Runpod endpoint
+    from scaling to zero. ``workers.max`` is how far flex workers can grow.
+    """
+    minimum = max(1, int(min_instances))
     maximum = max(minimum, int(max_instances), 1)
     return minimum, maximum
 
@@ -316,6 +329,12 @@ def deploy_inference_endpoint(
         health_path=health_path,
     )
     existing = find_endpoint(model_id)
+    existing_type = str((existing or {}).get("type") or "")
+    if existing is not None and existing_type not in {"", "LOAD_BALANCER"}:
+        endpoint_id = str(existing.get("id") or "")
+        if endpoint_id:
+            _request("DELETE", f"/v2/serverless/{endpoint_id}")
+        existing = None
     if existing is not None:
         endpoint_id = str(existing.get("id") or "")
         update = dict(body)

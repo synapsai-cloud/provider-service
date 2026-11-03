@@ -119,6 +119,39 @@ def test_beam_adapter_starts_the_callers_command(monkeypatch):
     assert captured["command"] == command
 
 
+def test_custom_image_deploy_sets_checkpoint_readiness(monkeypatch):
+    captured = {}
+
+    def _deploy(**kwargs):
+        captured.update(kwargs)
+        return {
+            "ok": True,
+            "url": "https://synapsai-m1-8000.app.beam.cloud",
+            "persistent_url": "",
+            "burst_url": "https://synapsai-m1-8000.app.beam.cloud",
+            "persistent_instances": 0,
+            "tasks_per_container": 1,
+        }
+
+    monkeypatch.setattr(
+        "provider_service.providers.beam.app.deploy_inference_pod",
+        _deploy,
+    )
+    adapter = BeamAdapter()
+
+    async def _run():
+        await adapter.deploy_custom_function(
+            model_id="m1",
+            image="ghcr.io/org/app:1.0",
+            commands=["python", "server.py"],
+        )
+
+    asyncio.run(_run())
+    assert captured["untrusted"] is True
+    assert captured["readiness_path"] == "/system/ready"
+    assert captured["command"] == ["python", "server.py"]
+
+
 def test_modal_gpu_picks_smallest_fit():
     assert modal_gpu(16000, 1) == "T4"
     assert modal_gpu(24000, 1) == "L4"
