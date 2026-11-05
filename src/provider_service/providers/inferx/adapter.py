@@ -6,7 +6,7 @@ import asyncio
 from typing import Any
 
 from provider_service.providers.inferx import app as inferx_app
-from provider_service.providers.schema import InstanceHealth, ModelStatusSummary, tail_log_text
+from provider_service.providers.schema import InferenceRoute, InstanceHealth, ModelStatusSummary, tail_log_text
 from provider_service.settings import cuda_visible_devices_value
 from provider_service.inferx_client import (
     DEFAULT_FUNCTION_IMAGE,
@@ -308,6 +308,19 @@ class InferxAdapter:
     async def check_persistent_instances(self, model_id: str) -> list[InstanceHealth]:
         del model_id
         return []
+
+    async def assign_request(
+        self,
+        model_id: str,
+        *,
+        task: str | None = None,
+        request_limit: int | None = None,
+    ) -> InferenceRoute:
+        del task, request_limit
+        return InferenceRoute(url=self.model_inference_url(model_id), role="")
+
+    async def release_request(self, model_id: str, role: str) -> None:
+        del model_id, role
 
 
 def is_inferx_error(exc: BaseException) -> bool:

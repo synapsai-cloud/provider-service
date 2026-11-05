@@ -6,7 +6,7 @@ import asyncio
 from typing import Any
 
 from provider_service.providers.modal import app as modal_app
-from provider_service.providers.schema import InstanceHealth, ModelStatusSummary
+from provider_service.providers.schema import InferenceRoute, InstanceHealth, ModelStatusSummary
 from provider_service.settings import (
     InferenceBackendError,
     modal_proxy_bearer,
@@ -191,3 +191,16 @@ class ModalAdapter:
     async def check_persistent_instances(self, model_id: str) -> list[InstanceHealth]:
         del model_id
         return []
+
+    async def assign_request(
+        self,
+        model_id: str,
+        *,
+        task: str | None = None,
+        request_limit: int | None = None,
+    ) -> InferenceRoute:
+        del task, request_limit
+        return InferenceRoute(url=self.model_inference_url(model_id), role="")
+
+    async def release_request(self, model_id: str, role: str) -> None:
+        del model_id, role
