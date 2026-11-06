@@ -281,8 +281,10 @@ def _container_body(
     extra_env: dict[str, str] | None = None,
     port: int | None = None,
     health_path: str | None = None,
+    disk_gb: int | None = None,
+    by_availability: bool = False,
 ) -> dict[str, Any]:
-    pool, count = runpod_gpu_pool(vram_mb, gpu_count)
+    pool, count = runpod_gpu_pool(vram_mb, gpu_count, by_availability=by_availability)
     minimum, maximum = _worker_bounds(min_instances, max_instances)
     listen = int(port or DEFAULT_LISTEN_PORT)
     env = {
@@ -303,7 +305,7 @@ def _container_body(
         "type": "LOAD_BALANCER",
         "entrypoint": list(command),
         "ports": [f"{listen}/http"],
-        "disk": _disk_gb(),
+        "disk": int(disk_gb) if disk_gb is not None else _disk_gb(),
         "env": env,
         "gpu": {"pools": [pool], "count": count},
         "workers": {
@@ -337,8 +339,14 @@ def deploy_inference_endpoint(
     extra_env: dict[str, str] | None = None,
     port: int | None = None,
     health_path: str | None = None,
+    disk_gb: int | None = None,
+    by_availability: bool = False,
 ) -> dict[str, Any]:
-    """Create or replace the Runpod endpoint for one model and return its URL."""
+    """Create or replace the Runpod endpoint for one model and return its URL.
+
+    ``by_availability`` chooses the GPU pool from pools that have US
+    serverless capacity right now.
+    """
     if not str(image or "").strip():
         raise RunpodBackendError("image is required")
     resolved_image = str(image).strip()
@@ -359,6 +367,8 @@ def deploy_inference_endpoint(
         extra_env=extra_env,
         port=port,
         health_path=health_path,
+        disk_gb=disk_gb,
+        by_availability=by_availability,
     )
     existing = find_endpoint(model_id)
     existing_type = str((existing or {}).get("type") or "")

@@ -300,15 +300,25 @@ def runpod_api_base() -> str:
     return _first_nonempty(os.getenv("RUNPOD_API_BASE"), "https://api.runpod.io").rstrip("/")
 
 
-def runpod_gpu_pool(vram_mb: int, gpu_count: int = 1) -> tuple[str, int]:
-    """Map a VRAM request onto a Runpod serverless pool id and GPU count."""
+def runpod_gpu_pool(
+    vram_mb: int,
+    gpu_count: int = 1,
+    *,
+    by_availability: bool = False,
+) -> tuple[str, int]:
+    """Map a VRAM request onto a Runpod serverless pool id and GPU count.
+
+    ``by_availability`` keeps only pools with US secure-cloud serverless
+    capacity for ``gpu_count``. The cheapest pool that still covers
+    ``vram_mb`` is the one returned.
+    """
     count = int(gpu_count or 1)
     if count <= 0:
         raise InferenceBackendError("gpu_count must be a positive integer")
     override = _first_nonempty(os.getenv("RUNPOD_GPU_POOL"))
     if override != "":
         return override, count
-    return gpu_card("runpod", vram_mb).name, count
+    return gpu_card("runpod", vram_mb, by_availability=by_availability, gpu_count=count).name, count
 
 
 @dataclass(frozen=True)
@@ -320,14 +330,28 @@ class GpuCard:
     usd_per_hour: float
 
 
-def gpu_catalog(backend: str, *, warm: bool = False) -> tuple:
-    """Card rows for ``backend``. Burst pods are the default. ``warm`` is Beam's reserved list."""
+def gpu_catalog(
+    backend: str,
+    *,
+    warm: bool = False,
+    by_availability: bool = False,
+    gpu_count: int = 1,
+) -> tuple:
+    """Card rows for ``backend``. Burst pods are the default. ``warm`` is Beam's reserved list.
+
+    ``by_availability`` applies to Runpod. It replaces the static pool list
+    with the pools that have US serverless capacity for ``gpu_count``.
+    """
     name = str(backend or "").strip().lower()
     if name == "beam":
         return BEAM_ONDEMAND_GPUS if warm else BEAM_POD_GPUS
     if name == "modal":
         return MODAL_GPUS
     if name == "runpod":
+        if by_availability:
+            from provider_service.providers.runpod.catalog import pools_in_stock
+
+            return pools_in_stock(gpu_count)
         return RUNPOD_GPU_POOLS
     raise InferenceBackendError(
         f"{name} has no GPU card prices. "
@@ -356,17 +380,32 @@ def _fit_card(catalog: tuple, needed_mb: int, *, backend: str) -> tuple:
     return fitting[0]
 
 
-def gpu_card(backend: str, vram_mb: int, *, warm: bool = False) -> GpuCard:
+def gpu_card(
+    backend: str,
+    vram_mb: int,
+    *,
+    warm: bool = False,
+    by_availability: bool = False,
+    gpu_count: int = 1,
+) -> GpuCard:
     """Smallest priced card on ``backend`` that covers ``vram_mb`` for one GPU.
 
     Same-VRAM ties take the cheaper list price. Nothing is clamped onto a
     smaller card: the caller splits the model across ``gpu_count``.
+    ``by_availability`` limits Runpod to pools with live US serverless capacity.
     """
     name = str(backend or "").strip().lower()
     needed = int(vram_mb or 0)
     if needed <= 0:
         raise InferenceBackendError("vram_mb must be a positive integer")
-    row = _fit_card(gpu_catalog(name, warm=warm), needed, backend=name)
+    catalog = gpu_catalog(name, warm=warm, by_availability=by_availability, gpu_count=gpu_count)
+    if not catalog:
+        raise InferenceBackendError(
+            "Runpod has no serverless GPU pool with capacity in the US right now."
+            if name == "runpod"
+            else f"{name} has no GPU cards."
+        )
+    row = _fit_card(catalog, needed, backend=name)
     return GpuCard(name=row[1], vram_mb=row[0], usd_per_hour=_card_price(row))
 
 
@@ -379,23 +418,40 @@ class GpuPlan:
     card: GpuCard
 
 
-def plan_gpus(total_vram_mb: int, backend: str, *, warm: bool = False) -> GpuPlan:
+def plan_gpus(
+    total_vram_mb: int,
+    backend: str,
+    *,
+    warm: bool = False,
+    by_availability: bool = False,
+) -> GpuPlan:
     """Pick ``gpu_count`` so each GPU's share fits a card on ``backend``.
 
     One GPU when a card covers the total. Otherwise the count is the smallest
     split whose per-GPU share fits the largest card, and that share selects
-    the cheapest fitting card.
+    the cheapest fitting card. ``by_availability`` limits Runpod to pools
+    with live US serverless capacity at that GPU count.
     """
     name = str(backend or "").strip().lower()
-    catalog = gpu_catalog(name, warm=warm)
     total = int(total_vram_mb or 0)
     if total <= 0:
         raise InferenceBackendError("vram_mb must be a positive integer")
-    largest = max(row[0] for row in catalog)
+    live = by_availability and name == "runpod"
     count = 1
+    saw_cards = False
+    largest_seen = 0
+    largest_name = ""
     while count <= 64:
+        catalog = gpu_catalog(name, warm=warm, by_availability=live, gpu_count=count)
+        if not catalog:
+            break
+        saw_cards = True
+        biggest = max(catalog, key=lambda row: row[0])
+        if biggest[0] > largest_seen:
+            largest_seen = biggest[0]
+            largest_name = biggest[1]
         per_gpu = (total + count - 1) // count
-        if per_gpu <= largest:
+        if per_gpu <= biggest[0]:
             row = _fit_card(catalog, per_gpu, backend=name)
             return GpuPlan(
                 gpu_count=count,
@@ -403,6 +459,15 @@ def plan_gpus(total_vram_mb: int, backend: str, *, warm: bool = False) -> GpuPla
                 card=GpuCard(name=row[1], vram_mb=row[0], usd_per_hour=_card_price(row)),
             )
         count += 1
+    if live and not saw_cards:
+        raise InferenceBackendError(
+            "Runpod has no serverless GPU pool with capacity in the US right now."
+        )
+    if live and largest_seen:
+        raise InferenceBackendError(
+            f"Runpod GPUs with capacity cover up to {largest_seen // 1024} GB each ({largest_name}). "
+            "Split the model across gpu_count instead of requesting more VRAM on one GPU."
+        )
     raise InferenceBackendError(
         f"{name} cannot cover {total // 1024} GB even split across 64 GPUs."
     )

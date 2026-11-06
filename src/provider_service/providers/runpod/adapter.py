@@ -85,8 +85,9 @@ class RunpodAdapter:
         request_limit: int | None = None,
         port: int | None = None,
         health_path: str | None = None,
+        disk_gb: int | None = None,
+        by_availability: bool = False,
     ) -> dict[str, Any]:
-        """Start ``command`` from ``image`` on a Runpod endpoint."""
         if not command:
             raise InferenceBackendError("command is required")
         if not str(image or "").strip():
@@ -108,6 +109,8 @@ class RunpodAdapter:
             extra_env=extra_env,
             port=port,
             health_path=health_path,
+            disk_gb=disk_gb,
+            by_availability=by_availability,
         )
         self.remember_url(model_id, created["url"])
         return created
@@ -126,6 +129,8 @@ class RunpodAdapter:
         vram_mb: int = 24000,
         mode: str = "create",
         request_limit: int | None = None,
+        disk_gb: int | None = None,
+        by_availability: bool = False,
     ) -> dict[str, Any]:
         del mode
         limit = runpod_target_concurrency(request_limit=request_limit)
@@ -141,6 +146,8 @@ class RunpodAdapter:
             worker_timeout=worker_timeout,
             scale_up_threshold=scale_up_threshold,
             request_concurrency=limit,
+            disk_gb=disk_gb,
+            by_availability=by_availability,
         )
         self.remember_url(model_id, created["url"])
         return created
