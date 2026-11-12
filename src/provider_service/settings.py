@@ -349,9 +349,9 @@ def gpu_catalog(
         return MODAL_GPUS
     if name == "runpod":
         if by_availability:
-            from provider_service.providers.runpod.catalog import pools_in_stock
-
-            return pools_in_stock(gpu_count)
+            raise InferenceBackendError(
+                "Runpod availability selection runs in modules; provider-service is beam-only."
+            )
         return RUNPOD_GPU_POOLS
     raise InferenceBackendError(
         f"{name} has no GPU card prices. "

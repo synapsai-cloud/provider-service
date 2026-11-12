@@ -1,6 +1,8 @@
 # Provider service
 
-HTTP control plane for InferX, Modal, Runpod, and Beam. It is the process that loads `beam-client` and `beta9`. Those packages are AGPL-3.0, and so is this service. See `LICENSE`.
+HTTP control plane for Beam. It is the process that loads `beam-client` and `beta9`. Those packages are AGPL-3.0, and so is this service. See `LICENSE`.
+
+InferX, Modal, Runpod, and Cerebrium run inside `modules`. Only Beam stays here.
 
 Callers send one JSON request:
 
@@ -8,7 +10,7 @@ Callers send one JSON request:
 {"backend": "beam", "op": "deploy_model", "args": {"model_id": "m1"}}
 ```
 
-`backend` is `inferx`, `modal`, `runpod`, or `beam`. The service keeps one adapter for each backend in this process, including Beam's in-flight route book.
+`backend` must be `beam`. The service keeps the Beam adapter in this process, including Beam's in-flight route book.
 
 ## Run
 

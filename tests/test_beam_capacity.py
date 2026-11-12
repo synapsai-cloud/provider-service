@@ -10,7 +10,6 @@ from provider_service.providers.beam.capacity import (
     volume_names_for_app,
     warm_app_name,
 )
-from provider_service.providers.runpod.app import _container_body, endpoint_storage_gb
 from provider_service.settings import synapsai_app_name
 
 
@@ -61,58 +60,6 @@ def test_burst_storage_reads_volume_bytes_for_the_burst_pod():
     ]
     assert burst_storage_gb(model_id, has_burst_deployment=False, volumes=volumes) == 0
     assert burst_storage_gb(model_id, has_burst_deployment=True, volumes=volumes) == 5
-
-
-def test_runpod_keeps_us_data_centers_from_the_north_america_catalog():
-    from provider_service.providers.runpod.app import _us_data_center_ids_from_catalog
-
-    ids = _us_data_center_ids_from_catalog(
-        {
-            "dataCenters": [
-                {"id": "EU-RO-1", "region": "EUROPE"},
-                {"id": "US-TX-3", "region": "NORTH_AMERICA"},
-                {"id": "CA-MTL-1", "region": "NORTH_AMERICA"},
-                {"id": "US-KS-2", "region": "NORTH_AMERICA"},
-                {"id": "US-TX-3", "region": "NORTH_AMERICA"},
-            ]
-        }
-    )
-    assert ids == ["US-TX-3", "US-KS-2"]
-
-
-def test_runpod_endpoint_is_a_secure_cloud_load_balancer_with_active_workers(monkeypatch):
-    monkeypatch.setattr(
-        "provider_service.providers.runpod.app.us_data_center_ids",
-        lambda: ["US-TX-3", "US-KS-2"],
-    )
-    body = _container_body(
-        command=["python", "-m", "server"],
-        image="docker.io/example/inference:latest",
-        gpu_count=4,
-        vram_mb=24 * 1024,
-        min_instances=0,
-        max_instances=3,
-        worker_timeout=None,
-        scale_up_threshold=None,
-        hf_token=None,
-        request_concurrency=2,
-        health_path="/system/health",
-    )
-    assert body["type"] == "LOAD_BALANCER"
-    assert body["image"] == "docker.io/example/inference:latest"
-    assert body["gpu"]["count"] == 4
-    assert body["workers"]["min"] == 1
-    assert body["workers"]["max"] == 3
-    assert body["scaling"]["type"] == "REQUEST_COUNT"
-    assert body["dataCenterIds"] == ["US-TX-3", "US-KS-2"]
-    assert body["env"]["HEALTH_CHECK_PATH"] == "/system/health"
-    assert "cloud" not in body
-
-
-def test_runpod_storage_reads_the_endpoint_disk():
-    assert endpoint_storage_gb(None) == 0
-    assert endpoint_storage_gb({"disk": 40}) == 40
-    assert endpoint_storage_gb({"template": {"disk": 80}}) == 80
 
 
 def test_warm_name_strips_back_to_the_model():
@@ -202,60 +149,4 @@ def test_beam_list_pod_instances_standardizes_status_and_warm_flag(monkeypatch):
     assert len(summary_all.serving_instances) == 1
     assert summary_all.serving_instances[0].id == "c-warm"
     assert summary_all.serving_instances[0].warm is True
-
-
-def test_runpod_and_modal_list_instances_standardize_warm_vs_burst(monkeypatch):
-    import modal
-    from provider_service.providers.modal import app as modal_app
-    from provider_service.providers.runpod import app as runpod_app
-
-    monkeypatch.setattr(
-        runpod_app,
-        "list_endpoints",
-        lambda: [{"id": "ep-1", "name": "synapsai-qwen", "workers": {"min": 1, "max": 2}}],
-    )
-    monkeypatch.setattr(
-        runpod_app,
-        "_list_workers",
-        lambda _ep_id: [
-            {"id": "w-1", "status": "RUNNING"},
-            {"id": "w-2", "status": "IDLE"},
-            {"id": "w-3", "status": "INITIALIZING"},
-        ],
-    )
-    rp_rows = runpod_app.list_endpoint_instances()
-    rp_by_id = {row["id"]: row for row in rp_rows}
-    assert rp_by_id["w-1"]["status"] == "ready"
-    assert rp_by_id["w-1"]["warm"] is True
-    assert rp_by_id["w-2"]["status"] == "ready"
-    assert rp_by_id["w-2"]["warm"] is False
-    assert rp_by_id["w-3"]["status"] == "sleeping"
-    assert rp_by_id["w-3"]["warm"] is False
-
-    rp_pending_summary = runpod_app.summarize_endpoint_instances([rp_by_id["w-3"]], min_instances=0)
-    assert rp_pending_summary.status == "sleeping"
-    assert rp_pending_summary.active_instances == 0
-
-    modal_app._MIN_CONTAINERS["synapsai-qwen"] = 1
-    monkeypatch.setattr(
-        modal.experimental,
-        "list_deployed_apps",
-        lambda **_kwargs: [SimpleNamespace(name="synapsai-qwen", containers=2)],
-    )
-    monkeypatch.setattr(
-        modal_app,
-        "_list_containers",
-        lambda _app_name: [
-            SimpleNamespace(container_id="ta-1"),
-            SimpleNamespace(container_id="ta-2"),
-        ],
-    )
-    modal_rows = modal_app.list_server_instances()
-    assert len(modal_rows) == 2
-    assert modal_rows[0]["id"] == "ta-1"
-    assert modal_rows[0]["status"] == "ready"
-    assert modal_rows[0]["warm"] is True
-    assert modal_rows[1]["id"] == "ta-2"
-    assert modal_rows[1]["status"] == "ready"
-    assert modal_rows[1]["warm"] is False
 

@@ -1,7 +1,7 @@
-"""HTTP front for InferX, Modal, Runpod, and Beam.
+"""HTTP front for Beam.
 
-One process holds the provider adapters. Callers send a backend name and an
-operation. Provider credentials are read from this process environment.
+One process holds the Beam adapter. Callers send ``backend=beam`` and an
+operation. Beam credentials are read from this process environment.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ app = FastAPI(title="Provider service")
 DEFAULT_SOURCE_URL = "https://github.com/synapsai-cloud/provider-service"
 
 _ADAPTERS: dict[str, Any] = {}
-_BACKENDS = ("inferx", "modal", "runpod", "beam")
+_BACKENDS = ("beam",)
 _OPS = {
     "base_url",
     "request_api_key",
@@ -97,22 +97,11 @@ def _adapter(name: str) -> Any:
     cached = _ADAPTERS.get(name)
     if cached is not None:
         return cached
-    if name == "modal":
-        from provider_service.providers.modal.adapter import ModalAdapter
+    if name != "beam":
+        raise InferenceBackendError(f"backend must be beam (got {name!r})")
+    from provider_service.providers.beam.adapter import BeamAdapter
 
-        cached = ModalAdapter()
-    elif name == "runpod":
-        from provider_service.providers.runpod.adapter import RunpodAdapter
-
-        cached = RunpodAdapter()
-    elif name == "beam":
-        from provider_service.providers.beam.adapter import BeamAdapter
-
-        cached = BeamAdapter()
-    else:
-        from provider_service.providers.inferx.adapter import InferxAdapter
-
-        cached = InferxAdapter()
+    cached = BeamAdapter()
     _ADAPTERS[name] = cached
     return cached
 

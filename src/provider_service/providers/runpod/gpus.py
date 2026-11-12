@@ -1,11 +1,9 @@
 """Runpod serverless GPU pools and flex-worker list prices.
 
-https://docs.runpod.io/sdk/configuration/gpu-types
 https://docs.runpod.io/references/gpu-types
-https://www.runpod.io/pricing (serverless, November 2026).
+https://www.runpod.io/pricing (serverless, October 2026).
 The third field is USD/hr. AMPERE_48 is a 48 GB pool; 40 GB is only the
-selection ceiling before ADA_48_PRO. MIG slices are not listed as their own
-pools — they share AMPERE_24 / ADA_48_PRO pricing on the public table.
+selection ceiling before ADA_48_PRO.
 """
 
 RUNPOD_GPU_POOLS = (

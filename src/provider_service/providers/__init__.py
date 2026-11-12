@@ -1,32 +1,14 @@
-"""GPU inference provider adapters (InferX, Modal, Runpod, Beam)."""
+"""Beam inference provider adapter."""
 
 from __future__ import annotations
 
 
 def build_inference_backend(name: str | None = None):
-    """Construct one adapter. ``name`` is that provider."""
-    from provider_service.settings import resolve_inference_backend
+    """Construct the Beam adapter."""
+    from provider_service.providers.beam.adapter import BeamAdapter
 
-    resolved = resolve_inference_backend(name)
-    if resolved == "modal":
-        from provider_service.providers.modal.adapter import ModalAdapter
-
-        return ModalAdapter()
-    if resolved == "runpod":
-        from provider_service.providers.runpod.adapter import RunpodAdapter
-
-        return RunpodAdapter()
-    if resolved == "beam":
-        from provider_service.providers.beam.adapter import BeamAdapter
-
-        return BeamAdapter()
-    from provider_service.providers.inferx.adapter import InferxAdapter
-
-    return InferxAdapter()
+    return BeamAdapter()
 
 
 def build_inference_backends() -> dict:
-    """Adapters for every provider named by ``INFERENCE_BACKEND``."""
-    from provider_service.settings import backend_names_in_use
-
-    return {name: build_inference_backend(name) for name in backend_names_in_use()}
+    return {"beam": build_inference_backend()}

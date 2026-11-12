@@ -188,21 +188,9 @@ def summarize_provider_instances(
     backend_name = str(getattr(backend, "backend_name", "") or "").strip().lower()
     if not backend_name and pods:
         backend_name = str(pods[0].get("backend") or "").strip().lower()
-    if backend_name == "beam":
-        from provider_service.providers.beam.app import summarize_pod_instances
+    from provider_service.providers.beam.app import summarize_pod_instances
 
-        return summarize_pod_instances(pods, min_instances=min_instances)
-    if backend_name == "modal":
-        from provider_service.providers.modal.app import summarize_server_instances
-
-        return summarize_server_instances(pods, min_instances=min_instances)
-    if backend_name == "runpod":
-        from provider_service.providers.runpod.app import summarize_endpoint_instances
-
-        return summarize_endpoint_instances(pods, min_instances=min_instances)
-    from provider_service.providers.inferx.app import summarize_pod_instances as summarize_inferx
-
-    return summarize_inferx(pods, min_instances=min_instances)
+    return summarize_pod_instances(pods, min_instances=min_instances)
 
 
 def collect_model_summaries(
