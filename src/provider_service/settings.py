@@ -1,9 +1,7 @@
-"""Switch the inference control plane between InferX, Modal, Runpod, and Beam.
+"""Beam settings for the provider service.
 
-``INFERENCE_BACKEND`` must be set. It is one provider (``beam``) or a route list
-(``warm=runpod,burst=modal``). Callers that name a backend on the request do
-not use this value. Modal, Runpod, and Beam start the command and image the
-caller sends. InferX keeps its own function image.
+This process only runs Beam. InferX, Modal, and Runpod live in ``modules``.
+``INFERENCE_BACKEND`` must be ``beam``.
 """
 
 from __future__ import annotations
@@ -13,27 +11,23 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from provider_service.inferx_client import inferx_function_name
 from provider_service.providers.beam.gpus import BEAM_ONDEMAND_GPUS, BEAM_POD_GPUS
-from provider_service.providers.modal.gpus import MODAL_GPUS
-from provider_service.providers.runpod.gpus import RUNPOD_GPU_POOLS
 
-INFERENCE_BACKENDS = ("inferx", "modal", "runpod", "beam")
-_V3_BACKENDS = frozenset({"modal", "runpod", "beam"})
-_BACKEND_LABELS = {
-    "inferx": "InferX",
-    "modal": "Modal",
-    "runpod": "Runpod",
-    "beam": "Beam",
-}
+INFERENCE_BACKENDS = ("beam",)
+_V3_BACKENDS = frozenset({"beam"})
+_BACKEND_LABELS = {"beam": "Beam"}
+_APP_PREFIX = "synapsai-"
+_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 DEFAULT_LISTEN_PORT = 8000
-MODAL_APP_PREFIX = "synapsai-"
-MODAL_SERVER_NAME = "Inference"
 
 
 class InferenceBackendError(Exception):
     pass
+
+
+class OutOfCapacityError(InferenceBackendError):
+    """Beam cannot place this workload because it has no compute capacity."""
 
 
 def _first_nonempty(*values: str | None) -> str:
@@ -51,8 +45,7 @@ def inference_backend_setting() -> str:
     if raw == "":
         raise InferenceBackendError(
             "INFERENCE_BACKEND must be set to one provider "
-            "(inferx, modal, runpod, beam) or a route list "
-            "such as warm=runpod,burst=modal"
+            "(beam)"
         )
     return raw
 
@@ -71,7 +64,7 @@ def resolve_inference_backend(name: str | None = None) -> str:
         allowed = ", ".join(INFERENCE_BACKENDS)
         raise InferenceBackendError(
             "INFERENCE_BACKEND must name one provider "
-            f"({allowed}) or a route list such as warm=runpod,burst=modal "
+            f"({allowed}) "
             f"(got {resolved!r})"
         )
     return resolved
@@ -98,9 +91,7 @@ def parse_backend_routes(raw: str | None = None) -> list[BackendRoute]:
 
     A single provider such as ``beam`` has no routes. Rules are comma,
     semicolon, or newline separated and evaluated in order.
-    ``min_workers>=1=runpod,min_workers=0=modal`` places warm models on Runpod
-    and scale-to-zero models on Modal. ``warm=runpod,burst=modal`` keeps one
-    model's always-on replicas on Runpod and its scale-out replicas on Modal.
+    A scaling rule names ``beam`` only. Other providers run in ``modules``.
     A scaling policy that matches no rule is an error.
     """
     if raw is None:
@@ -128,8 +119,7 @@ def parse_backend_routes(raw: str | None = None) -> list[BackendRoute]:
         if match is None:
             raise InferenceBackendError(
                 "INFERENCE_BACKEND is one provider, or rules like "
-                "min_workers>=1=runpod,min_workers=0=modal or "
-                f"warm=runpod,burst=modal (got {piece!r})"
+                f"min_workers>=1=beam (got {piece!r})"
             )
         backend = match.group(3).lower()
         _require_backend_name(backend, piece)
@@ -214,25 +204,32 @@ def backend_label(backend: Any = None) -> str:
     return _BACKEND_LABELS.get(name, name or "provider")
 
 
+def _sanitized_model_id(model_id: str) -> str:
+    name = str(model_id or "").strip()
+    if name == "":
+        raise InferenceBackendError("model_id is required")
+    if _MODEL_ID_RE.fullmatch(name):
+        return name
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-._")
+    if sanitized == "" or not _MODEL_ID_RE.fullmatch(sanitized):
+        raise InferenceBackendError(f"model_id {model_id!r} cannot be used as an app name")
+    return sanitized
+
+
 def synapsai_app_name(model_id: str) -> str:
-    """Stable lowercase name shared by Modal apps and Runpod endpoints."""
-    raw = inferx_function_name(model_id).lower()
+    """Stable lowercase Beam app name for a SynapsAI model."""
+    raw = _sanitized_model_id(model_id).lower()
     cleaned = re.sub(r"[^a-z0-9.-]+", "-", raw).strip("-.")
     if cleaned == "":
         raise InferenceBackendError(f"model_id {model_id!r} cannot be used as an app name")
-    name = f"{MODAL_APP_PREFIX}{cleaned}"
+    name = f"{_APP_PREFIX}{cleaned}"
     return name[:63].strip("-.")
-
-
-def modal_app_name(model_id: str) -> str:
-    """Modal App name for a SynapsAI model. Stable and lowercase."""
-    return synapsai_app_name(model_id)
 
 
 def function_name_from_app(app_name: str) -> str:
     name = str(app_name or "").strip()
-    if name.startswith(MODAL_APP_PREFIX):
-        return name[len(MODAL_APP_PREFIX):]
+    if name.startswith(_APP_PREFIX):
+        return name[len(_APP_PREFIX):]
     return name
 
 
@@ -249,78 +246,6 @@ def cuda_visible_devices_value(gpu_count: int) -> str:
     return ",".join(str(index) for index in range(count))
 
 
-def modal_gpu(vram_mb: int, gpu_count: int = 1) -> str:
-    """Map a VRAM request onto a Modal GPU string (``L4``, ``H100:2``, ...).
-
-    ``vram_mb`` is the memory one GPU must provide. ``gpu_count`` greater than
-    1 uses Modal's ``TYPE:N`` form.
-    """
-    count = int(gpu_count or 1)
-    if count <= 0:
-        raise InferenceBackendError("gpu_count must be a positive integer")
-    override = _first_nonempty(os.getenv("MODAL_GPU"))
-    if override != "":
-        if count > 1 and ":" not in override:
-            return f"{override}:{count}"
-        return override
-    chosen = gpu_card("modal", vram_mb).name
-    if count > 1:
-        return f"{chosen}:{count}"
-    return chosen
-
-
-def modal_proxy_bearer() -> str:
-    """Proxy token Modal Servers expect as ``Authorization: Bearer id.secret``.
-
-    These are workspace proxy tokens, not the Modal SDK token pair.
-    https://modal.com/docs/guide/webhook-proxy-auth
-    """
-    token_id = _first_nonempty(os.getenv("MODAL_PROXY_TOKEN_ID"))
-    token_secret = _first_nonempty(os.getenv("MODAL_PROXY_TOKEN_SECRET"))
-    if token_id == "" or token_secret == "":
-        return ""
-    return f"{token_id}.{token_secret}"
-
-
-def modal_server_unauthenticated() -> bool:
-    raw = _first_nonempty(os.getenv("MODAL_SERVER_UNAUTHENTICATED"), "0")
-    return raw == "1"
-
-
-def modal_environment_name() -> str | None:
-    name = _first_nonempty(os.getenv("MODAL_ENVIRONMENT"))
-    return name or None
-
-
-def runpod_api_key() -> str:
-    return _first_nonempty(os.getenv("RUNPOD_API_KEY"))
-
-
-def runpod_api_base() -> str:
-    return _first_nonempty(os.getenv("RUNPOD_API_BASE"), "https://api.runpod.io").rstrip("/")
-
-
-def runpod_gpu_pool(
-    vram_mb: int,
-    gpu_count: int = 1,
-    *,
-    by_availability: bool = False,
-) -> tuple[str, int]:
-    """Map a VRAM request onto a Runpod serverless pool id and GPU count.
-
-    ``by_availability`` keeps only pools with US secure-cloud serverless
-    capacity for ``gpu_count``. The cheapest pool that still covers
-    ``vram_mb`` is the one returned.
-    """
-    count = int(gpu_count or 1)
-    if count <= 0:
-        raise InferenceBackendError("gpu_count must be a positive integer")
-    override = _first_nonempty(os.getenv("RUNPOD_GPU_POOL"))
-    if override != "":
-        return override, count
-    return gpu_card("runpod", vram_mb, by_availability=by_availability, gpu_count=count).name, count
-
-
 @dataclass(frozen=True)
 class GpuCard:
     """One provider GPU. ``usd_per_hour`` is the provider list price for a single card."""
@@ -330,33 +255,14 @@ class GpuCard:
     usd_per_hour: float
 
 
-def gpu_catalog(
-    backend: str,
-    *,
-    warm: bool = False,
-    by_availability: bool = False,
-    gpu_count: int = 1,
-) -> tuple:
-    """Card rows for ``backend``. Burst pods are the default. ``warm`` is Beam's reserved list.
-
-    ``by_availability`` applies to Runpod. It replaces the static pool list
-    with the pools that have US serverless capacity for ``gpu_count``.
-    """
+def gpu_catalog(backend: str, *, warm: bool = False) -> tuple:
+    """Beam card rows. Burst pods are the default. ``warm`` is the reserved list."""
     name = str(backend or "").strip().lower()
-    if name == "beam":
-        return BEAM_ONDEMAND_GPUS if warm else BEAM_POD_GPUS
-    if name == "modal":
-        return MODAL_GPUS
-    if name == "runpod":
-        if by_availability:
-            raise InferenceBackendError(
-                "Runpod availability selection runs in modules; provider-service is beam-only."
-            )
-        return RUNPOD_GPU_POOLS
-    raise InferenceBackendError(
-        f"{name} has no GPU card prices. "
-        "Hourly inference price is the full card on beam, modal, or runpod."
-    )
+    if name != "beam":
+        raise InferenceBackendError(
+            f"{name} is not served here. This process only prices Beam GPUs."
+        )
+    return BEAM_ONDEMAND_GPUS if warm else BEAM_POD_GPUS
 
 
 def _card_price(row: tuple) -> float:
@@ -380,31 +286,19 @@ def _fit_card(catalog: tuple, needed_mb: int, *, backend: str) -> tuple:
     return fitting[0]
 
 
-def gpu_card(
-    backend: str,
-    vram_mb: int,
-    *,
-    warm: bool = False,
-    by_availability: bool = False,
-    gpu_count: int = 1,
-) -> GpuCard:
-    """Smallest priced card on ``backend`` that covers ``vram_mb`` for one GPU.
+def gpu_card(backend: str, vram_mb: int, *, warm: bool = False) -> GpuCard:
+    """Smallest priced Beam card that covers ``vram_mb`` for one GPU.
 
     Same-VRAM ties take the cheaper list price. Nothing is clamped onto a
     smaller card: the caller splits the model across ``gpu_count``.
-    ``by_availability`` limits Runpod to pools with live US serverless capacity.
     """
     name = str(backend or "").strip().lower()
     needed = int(vram_mb or 0)
     if needed <= 0:
         raise InferenceBackendError("vram_mb must be a positive integer")
-    catalog = gpu_catalog(name, warm=warm, by_availability=by_availability, gpu_count=gpu_count)
+    catalog = gpu_catalog(name, warm=warm)
     if not catalog:
-        raise InferenceBackendError(
-            "Runpod has no serverless GPU pool with capacity in the US right now."
-            if name == "runpod"
-            else f"{name} has no GPU cards."
-        )
+        raise InferenceBackendError(f"{name} has no GPU cards.")
     row = _fit_card(catalog, needed, backend=name)
     return GpuCard(name=row[1], vram_mb=row[0], usd_per_hour=_card_price(row))
 
@@ -418,40 +312,23 @@ class GpuPlan:
     card: GpuCard
 
 
-def plan_gpus(
-    total_vram_mb: int,
-    backend: str,
-    *,
-    warm: bool = False,
-    by_availability: bool = False,
-) -> GpuPlan:
-    """Pick ``gpu_count`` so each GPU's share fits a card on ``backend``.
+def plan_gpus(total_vram_mb: int, backend: str, *, warm: bool = False) -> GpuPlan:
+    """Pick ``gpu_count`` so each GPU's share fits a Beam card.
 
     One GPU when a card covers the total. Otherwise the count is the smallest
     split whose per-GPU share fits the largest card, and that share selects
-    the cheapest fitting card. ``by_availability`` limits Runpod to pools
-    with live US serverless capacity at that GPU count.
+    the cheapest fitting card.
     """
     name = str(backend or "").strip().lower()
     total = int(total_vram_mb or 0)
     if total <= 0:
         raise InferenceBackendError("vram_mb must be a positive integer")
-    live = by_availability and name == "runpod"
+    catalog = gpu_catalog(name, warm=warm)
+    largest = max(row[0] for row in catalog)
     count = 1
-    saw_cards = False
-    largest_seen = 0
-    largest_name = ""
     while count <= 64:
-        catalog = gpu_catalog(name, warm=warm, by_availability=live, gpu_count=count)
-        if not catalog:
-            break
-        saw_cards = True
-        biggest = max(catalog, key=lambda row: row[0])
-        if biggest[0] > largest_seen:
-            largest_seen = biggest[0]
-            largest_name = biggest[1]
         per_gpu = (total + count - 1) // count
-        if per_gpu <= biggest[0]:
+        if per_gpu <= largest:
             row = _fit_card(catalog, per_gpu, backend=name)
             return GpuPlan(
                 gpu_count=count,
@@ -459,15 +336,6 @@ def plan_gpus(
                 card=GpuCard(name=row[1], vram_mb=row[0], usd_per_hour=_card_price(row)),
             )
         count += 1
-    if live and not saw_cards:
-        raise InferenceBackendError(
-            "Runpod has no serverless GPU pool with capacity in the US right now."
-        )
-    if live and largest_seen:
-        raise InferenceBackendError(
-            f"Runpod GPUs with capacity cover up to {largest_seen // 1024} GB each ({largest_name}). "
-            "Split the model across gpu_count instead of requesting more VRAM on one GPU."
-        )
     raise InferenceBackendError(
         f"{name} cannot cover {total // 1024} GB even split across 64 GPUs."
     )
@@ -602,41 +470,6 @@ def beam_target_concurrency(
     if raw == "":
         return DEFAULT_REQUEST_LIMIT
     return _positive_limit(raw, "BEAM_TARGET_CONCURRENCY")
-
-
-def runpod_target_concurrency(
-    scale_up_threshold: float | None = None,
-    *,
-    request_limit: int | None = None,
-) -> int:
-    """In-flight requests per worker before Runpod adds another worker.
-
-    A caller-supplied ``request_limit`` wins. Otherwise ``RUNPOD_TARGET_CONCURRENCY``
-    overrides the default of 16.
-    """
-    del scale_up_threshold
-    if request_limit is not None:
-        return _positive_limit(request_limit, "request_limit")
-    from provider_service.limits import DEFAULT_REQUEST_LIMIT
-
-    raw = _first_nonempty(os.getenv("RUNPOD_TARGET_CONCURRENCY"))
-    if raw == "":
-        return DEFAULT_REQUEST_LIMIT
-    return _positive_limit(raw, "RUNPOD_TARGET_CONCURRENCY")
-
-
-def provider_from_url(url: str | None) -> str:
-    """Infer which provider should authenticate a request from its host."""
-    from urllib.parse import urlparse
-
-    host = (urlparse(str(url or "")).hostname or "").lower()
-    if host.endswith("modal.run") or ".modal." in host:
-        return "modal"
-    if "runpod.ai" in host or host.endswith("runpod.io"):
-        return "runpod"
-    if host.endswith("beam.cloud") or ".beam.cloud" in host:
-        return "beam"
-    return "inferx"
 
 
 def registry_credentials() -> tuple[str, str]:

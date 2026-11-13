@@ -135,7 +135,9 @@ def ensure_ondemand_pool(
 
     offers = _matching_offers(gateway, gpu, gpu_count)
     if not offers:
-        raise _error(
+        from provider_service.settings import OutOfCapacityError
+
+        raise OutOfCapacityError(
             f"No on-demand {gpu} offer has {max(1, int(gpu_count or 1))} GPU(s). "
             "Check `beam pool offers`."
         )
@@ -159,7 +161,11 @@ def ensure_ondemand_pool(
         LaunchPoolCapacityRequest(pool=config, nodes=missing)
     )
     if not launched.ok:
-        raise _error(getattr(launched, "err_msg", None) or f"Failed to reserve Beam pool {name}")
+        message = str(getattr(launched, "err_msg", None) or f"Failed to reserve Beam pool {name}")
+        from provider_service.providers.capacity import raise_if_beam_capacity
+
+        raise_if_beam_capacity(message)
+        raise _error(message)
     if not _wait_until_ready(gateway, name, count):
         raise _error(f"Timed out waiting for on-demand pool {name} to become ready")
     return name

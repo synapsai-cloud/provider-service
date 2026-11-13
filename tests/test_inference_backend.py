@@ -19,7 +19,11 @@ def test_backend_must_be_set(monkeypatch):
         raise AssertionError("expected InferenceBackendError")
     except InferenceBackendError as exc:
         assert "must be set" in str(exc)
-    assert resolve_inference_backend("modal") == "modal"
+    try:
+        resolve_inference_backend("modal")
+        raise AssertionError("expected InferenceBackendError")
+    except InferenceBackendError:
+        pass
     monkeypatch.setenv("INFERENCE_BACKEND", "beam")
     assert resolve_inference_backend() == "beam"
 

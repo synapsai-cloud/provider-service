@@ -201,9 +201,7 @@ async def invoke(body: dict[str, Any], authorization: str | None = Header(defaul
         if inspect.iscoroutine(result):
             result = await result
     except Exception as exc:
-        from provider_service.inferx_client import InferxError
-
-        known = isinstance(exc, (InferenceBackendError, InferxError))
+        known = isinstance(exc, InferenceBackendError)
         return JSONResponse(
             {"ok": False, "error": str(exc) or type(exc).__name__, "type": type(exc).__name__},
             status_code=400 if known else 500,

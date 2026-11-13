@@ -489,7 +489,11 @@ def _deploy_named_pod(**kwargs) -> tuple[str, str]:
     context = _config_context()
     details, ok = pod.deploy(name=name, context=context)
     if not ok:
-        raise BeamBackendError(f"Beam failed to deploy pod {name}")
+        message = f"Beam failed to deploy pod {name}"
+        from provider_service.providers.capacity import raise_if_beam_capacity
+
+        raise_if_beam_capacity(str(details.get("error") or details.get("err_msg") or message))
+        raise BeamBackendError(message)
     deployment_id = str(details.get("deployment_id") or "")
     url = str(details.get("invoke_url") or "").rstrip("/")
     if not url and deployment_id:

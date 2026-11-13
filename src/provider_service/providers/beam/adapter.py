@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import shlex
 from typing import Any
 
 from provider_service.providers.beam import app as beam_app
@@ -12,8 +13,22 @@ from provider_service.settings import (
     beam_api_token,
     beam_target_concurrency,
 )
-from provider_service.inferx_client import normalize_commands
 from provider_service.url import build_url
+
+
+def normalize_commands(commands: str | list[str]) -> list[str]:
+    """Accept a shell string or argv list."""
+    if isinstance(commands, str):
+        tokens = shlex.split(commands)
+    elif isinstance(commands, list):
+        tokens = [str(item) for item in commands]
+    else:
+        raise InferenceBackendError("commands must be a string or a list of strings")
+    if len(tokens) == 0:
+        raise InferenceBackendError("commands must not be empty")
+    if any(token.strip() == "" for token in tokens):
+        raise InferenceBackendError("commands must not contain empty strings")
+    return tokens
 
 
 class _RouteBook:

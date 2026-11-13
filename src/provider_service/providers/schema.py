@@ -95,20 +95,15 @@ def function_key(name: str | None) -> str:
 def model_function_keys(model_id: str) -> set[str]:
     """Every name a provider pod row may use for this model.
 
-    Modal, Runpod, and Beam publish a sanitized app name. Long model ids are
-    truncated to fit that name, so the pod function is not always ``model_id``.
+    Beam publishes a sanitized app name. Long model ids are truncated to fit
+    that name, so the pod function is not always ``model_id``.
     """
     from provider_service.settings import function_name_from_app, synapsai_app_name
-    from provider_service.inferx_client import inferx_function_name
 
     raw = str(model_id or "").strip()
     if raw == "":
         return set()
     keys = {raw}
-    try:
-        keys.add(inferx_function_name(raw))
-    except Exception:
-        pass
     try:
         keys.add(function_name_from_app(synapsai_app_name(raw)))
     except Exception:

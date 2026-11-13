@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from provider_service.providers.beam.adapter import _RouteBook
 from provider_service.providers.beam.capacity import (
     burst_storage_gb,
@@ -149,4 +151,18 @@ def test_beam_list_pod_instances_standardizes_status_and_warm_flag(monkeypatch):
     assert len(summary_all.serving_instances) == 1
     assert summary_all.serving_instances[0].id == "c-warm"
     assert summary_all.serving_instances[0].warm is True
+
+
+def test_beam_capacity_message_is_not_a_quota_error():
+    from provider_service.providers.capacity import beam_out_of_capacity
+    from provider_service.settings import OutOfCapacityError
+
+    assert beam_out_of_capacity(
+        "No compute capacity for GPU type H100. Reserve hardware with 'beta9 machine reserve --gpu H100'."
+    )
+    assert beam_out_of_capacity("concurrency_limit_reached") is False
+    with pytest.raises(OutOfCapacityError):
+        from provider_service.providers.capacity import raise_if_beam_capacity
+
+        raise_if_beam_capacity("No serverless capacity for H100.")
 

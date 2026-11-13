@@ -1,14 +1,13 @@
 [project]
 name = "provider-service"
 version = "0.1.0"
-description = "HTTP control plane for InferX, Modal, Runpod, and Beam."
+description = "HTTP control plane for Beam."
 requires-python = ">=3.9"
 license = "AGPL-3.0-only"
 dependencies = [
   "fastapi",
   "uvicorn",
   "httpx",
-  "modal>=1.6.1",
   "beam-client>=0.2.222",
   "beta9>=0.1.285,<0.2",
 ]
